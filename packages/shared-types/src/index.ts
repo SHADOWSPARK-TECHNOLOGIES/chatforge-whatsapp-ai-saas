@@ -17,6 +17,8 @@ export interface TenantSettings {
   tone: 'formal' | 'casual' | 'pidgin-mix';
   pidginEnabled: boolean;
   escalationPhone?: string;
+  whatsappNumber?: string;
+  model?: string; // 'mock' | 'openai'
   defaultModel?: string;
   aiResolution?: boolean;
 }
