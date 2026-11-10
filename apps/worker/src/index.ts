@@ -4,8 +4,11 @@ import { normalizeMetaWebhook, type IncomingMessage } from './normalize.js';
 import { makeAdapter } from './whatsapp/adapter.js';
 import { haveDb } from './db.js';
 import { processIncoming } from './chatflow.js';
+import { registerWorkerRoutes } from './routes.js';
+import { startWorkers, stopWorkers } from './queue.js';
 
 const app: FastifyInstance = Fastify({ logger: true });
+registerWorkerRoutes(app);
 
 // ---- idempotency (dedup) + per-lead rate limiting (in-memory) ----
 const seen = new Set<string>();
@@ -76,5 +79,15 @@ app.listen({ port: config.port, host: '0.0.0.0' }, (err) => {
     app.log.error(err);
     process.exit(1);
   }
+  startWorkers();
   console.log(`[worker] CHATFORGE worker listening on :${config.port} (adapter=${makeAdapter().name}, db=${haveDb()})`);
+});
+
+process.on('SIGINT', () => {
+  stopWorkers();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  stopWorkers();
+  process.exit(0);
 });
