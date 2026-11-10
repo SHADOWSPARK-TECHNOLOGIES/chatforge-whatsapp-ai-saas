@@ -63,6 +63,10 @@ export class MockLLM implements LLMAdapter {
         if (d.link) s += `\nPay securely here: ${d.link}`;
         return s;
       }
+      // lead / CRM status update → friendly booking/qualification reply
+      if (typeof d.status === 'string' && d.leadId !== undefined) {
+        return 'Great! I\u2019ve noted your interest — let\u2019s move you forward. Reply "yes" if I should send a secure payment link, or ask any question.';
+      }
       return JSON.stringify(d);
     } catch {
       return 'Sorry, I ran into a small issue — one moment.';
