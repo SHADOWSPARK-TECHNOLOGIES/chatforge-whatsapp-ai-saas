@@ -1,0 +1,293 @@
+// CHATFORGE — WhatsApp AI Sales Agent SaaS. PostgreSQL (Neon-compatible).
+// `DATABASE_URL` is required only to run generate/migrate/seed; the app works in mock mode otherwise.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+}
+
+enum UserRole {
+  OWNER
+  STAFF
+  ADMIN
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  WON
+  LOST
+}
+
+enum ConversationStatus {
+  ACTIVE
+  ESCALATED
+  CLOSED
+}
+
+enum MessageRole {
+  CUSTOMER
+  AGENT
+  HUMAN
+  SYSTEM
+}
+
+enum IntentKind {
+  GREETING
+  INQUIRY_PRODUCT
+  PRICE_QUOTE
+  BOOKING_ORDER
+  PAYMENT_REQUEST
+  COMPLAINT
+  HUMAN_ESCALATION
+  FAREWELL
+  UNKNOWN
+}
+
+enum ScheduledMessageStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  EXPIRED
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+}
+
+enum FollowUpTrigger {
+  NEW_LEAD
+  NO_REPLY_24H
+  QUOTE_SENT
+  PAYMENT_SENT_PENDING_48H
+}
+
+model Tenant {
+  id                   String            @id @default(cuid())
+  name                 String
+  slug                 String            @unique
+  plan                 Plan              @default(FREE)
+  status               TenantStatus      @default(TRIAL)
+  whatsappPhoneId      String?
+  whatsappToken        String? // never fill at runtime outside secrets
+  paystackCustomerCode String?
+  billingEmail         String?
+  settings             Json              @default("{}") // TenantSettings
+
+  users         TenantUser[]
+  leads         Lead[]
+  conversations Conversation[]
+  products      ProductService[]
+  sequences     FollowUpSequence[]
+  scheduled     ScheduledMessage[]
+  paymentRequests PaymentRequest[]
+  broadcasts    Broadcast[]
+  subscriptions Subscription[]
+  auditLogs     AuditLog[]
+
+  @@index([slug])
+}
+
+model TenantUser {
+  id       String   @id @default(cuid())
+  email    String
+  password String   // bcrypt hash
+  role     UserRole @default(OWNER)
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, email])
+  @@index([email])
+}
+
+model Lead {
+  id               String     @id @default(cuid())
+  tenantId         String
+  tenant           Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappNumber   String
+  name             String?
+  status           LeadStatus @default(NEW)
+  source           String     @default("whatsapp")
+  lastContactAt    DateTime?
+  lifetimeValueNgn Int        @default(0)
+  customFields     Json       @default("{}")
+
+  conversation    Conversation?
+  scheduled       ScheduledMessage[]
+  paymentRequests PaymentRequest[]
+
+  @@unique([tenantId, whatsappNumber])
+  @@index([tenantId, status])
+}
+
+model Conversation {
+  id            String             @id @default(cuid())
+  tenantId      String
+  tenant        Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId        String            @unique
+  lead          Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status        ConversationStatus @default(ACTIVE)
+  channel       String            @default("whatsapp")
+  aiHandled     Boolean            @default(true)
+  createdAt     DateTime           @default(now())
+  lastMessageAt DateTime?
+  messages      Message[]
+
+  @@index([tenantId])
+  @@index([leadId])
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String
+  intent         IntentKind?
+  timestamp      DateTime         @default(now())
+  metadata       Json             @default("{}")
+  intentLog      IntentLog?
+
+  @@index([conversationId, timestamp])
+}
+
+model IntentLog {
+  id         String     @id @default(cuid())
+  messageId  String     @unique
+  message    Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  intent     IntentKind
+  confidence Float
+  modelUsed  String
+}
+
+model ProductService {
+  id          String  @id @default(cuid())
+  tenantId    String
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String
+  priceNgn    Int
+  category    String  @default("general")
+  inStock     Boolean @default(true)
+
+  @@index([tenantId])
+}
+
+model FollowUpSequence {
+  id         String         @id @default(cuid())
+  tenantId   String
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  triggersOn FollowUpTrigger
+  steps      Json           @default("[]") // FollowUpStep[]
+  active     Boolean        @default(true)
+  scheduled  ScheduledMessage[]
+
+  @@index([tenantId, triggersOn])
+}
+
+model ScheduledMessage {
+  id          String                @id @default(cuid())
+  tenantId    String
+  tenant      Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId      String
+  lead        Lead                  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  followUpId  String?
+  followUp    FollowUpSequence?     @relation(fields: [followUpId], references: [id], onDelete: SetNull)
+  sendAt      DateTime
+  status      ScheduledMessageStatus @default(PENDING)
+  content     String
+  createdAt   DateTime              @default(now())
+
+  @@index([tenantId, status])
+  @@index([sendAt])
+}
+
+model PaymentRequest {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId       String
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  amountNgn    Int
+  description  String
+  paystackLink String?
+  reference    String?
+  status       PaymentStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+
+  @@index([tenantId, status])
+}
+
+model Broadcast {
+  id            String          @id @default(cuid())
+  tenantId      String
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  audienceFilter Json           @default("{}")
+  content       String
+  scheduledAt   DateTime?
+  status        BroadcastStatus @default(DRAFT)
+  stats         Json            @default("{}") // { sent, delivered, read, failed }
+  createdAt     DateTime        @default(now())
+
+  @@index([tenantId, status])
+}
+
+model Subscription {
+  id                       String             @id @default(cuid())
+  tenantId                 String
+  tenant                   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan                     Plan
+  status                   SubscriptionStatus @default(ACTIVE)
+  paystackSubscriptionCode String?
+  renewsAt                 DateTime?
+  createdAt                DateTime           @default(now())
+
+  @@index([tenantId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor     String
+  action    String
+  metadata  Json     @default("{}")
+  timestamp DateTime @default(now())
+
+  @@index([tenantId])
+}
